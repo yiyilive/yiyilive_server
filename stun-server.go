@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/pion/rtp/codecs"
 	"io"
 	"time"
 
@@ -24,7 +25,9 @@ func main() {
 
 	// Setup the codecs you want to use.
 	// Only support VP8, this makes our proxying code simpler
-	m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
+	//m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
+	m.RegisterCodec(webrtc.NewRTPOpusCodec(webrtc.DefaultPayloadTypeOpus, 48000))
+	m.RegisterCodec(NewRTPH264Codec(webrtc.DefaultPayloadTypeH264, 90000, "42e01f"))
 
 	// Create the API object with the MediaEngine
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
@@ -149,4 +152,14 @@ func main() {
 		// Get the LocalDescription and take it to base64 so we can paste in browser
 		fmt.Println(signal.Encode(answer))
 	}
+}
+
+func NewRTPH264Codec(payloadType uint8, clockrate uint32, profileLevelId string) *webrtc.RTPCodec {
+	return webrtc.NewRTPCodec(webrtc.RTPCodecTypeVideo,
+		webrtc.H264,
+		clockrate,
+		0,
+		fmt.Sprintf("level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=%s", profileLevelId),
+		payloadType,
+		&codecs.H264Payloader{})
 }

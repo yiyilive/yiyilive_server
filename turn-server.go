@@ -1,16 +1,14 @@
 package main
 
 import (
+	"github.com/pion/logging"
+	"github.com/pion/turn"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
-
-	"github.com/pion/logging"
-	"github.com/pion/turn"
 )
 
 func createAuthHandler(usersMap map[string]string) turn.AuthHandler {
@@ -23,61 +21,36 @@ func createAuthHandler(usersMap map[string]string) turn.AuthHandler {
 }
 
 func main() {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
 	usersMap := map[string]string{}
 	usersMap["jac"] = "jac"
 
-	//users := os.Getenv("USERS")
-	//if users == "" {
-	//	log.Panic("USERS is a required environment variable")
-	//}
-	//for _, kv := range regexp.MustCompile(`(\w+)=(\w+)`).FindAllStringSubmatch(users, -1) {
-	//	usersMap[kv[1]] = kv[2]
-	//}
-
-	//realm := os.Getenv("REALM")
-	//if realm == "" {
-	//	log.Panic("REALM is a required environment variable")
-	//}
-
-	udpPortStr := os.Getenv("UDP_PORT")
-	if udpPortStr == "" {
-		udpPortStr = "3478"
-	}
-	udpPort, err := strconv.Atoi(udpPortStr)
-	if err != nil {
-		log.Panic(err)
-	}
-
-	var channelBindTimeout time.Duration
-	channelBindTimeoutStr := os.Getenv("CHANNEL_BIND_TIMEOUT")
-	if channelBindTimeoutStr != "" {
-		channelBindTimeout, err = time.ParseDuration(channelBindTimeoutStr)
-		if err != nil {
-			log.Panicf("CHANNEL_BIND_TIMEOUT=%s is an invalid time Duration", channelBindTimeoutStr)
-		}
-	}
-
-	s := turn.NewServer(&turn.ServerConfig{
+	conf := &turn.ServerConfig{
 		Realm:              "coolpy.net",
 		AuthHandler:        createAuthHandler(usersMap),
-		ChannelBindTimeout: channelBindTimeout,
-		ListeningPort:      udpPort,
+		ChannelBindTimeout: 30 * time.Second,
+		ListeningPort:      3478,
 		LoggerFactory:      logging.NewDefaultLoggerFactory(),
-		Software:           os.Getenv("SOFTWARE"),
-	})
+		Software:           "SOFTWARE",
+	}
 
-	err = s.Start()
+	srv := turn.NewServer(conf)
+
+	err := srv.Start()
 	if err != nil {
 		log.Panic(err)
 	}
 
-	<-sigs
+	log.Println("stun server on port", conf.ListeningPort)
 
-	err = s.Close()
-	if err != nil {
-		log.Panic(err)
-	}
+	signalChan := make(chan os.Signal, 1)
+	cleanupDone := make(chan bool)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for range signalChan {
+			_ = srv.Close()
+			log.Println("safe exit")
+			cleanupDone <- true
+		}
+	}()
+	<-cleanupDone
 }

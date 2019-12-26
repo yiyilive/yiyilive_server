@@ -50,9 +50,11 @@ type Client struct {
 
 func (c *Client) updatePeers() {
 	peers := make([]*Client, 0)
-	for k := range c.hub.clients {
-		peers = append(peers, k)
-	}
+	c.hub.clients.Range(func(key, value interface{}) bool {
+		client := key.(*Client)
+		peers = append(peers, client)
+		return true
+	})
 	res := bson.M{"type": "peers", "data": peers}
 	msg, _ := json.Marshal(&res)
 	c.hub.broadcast <- msg
@@ -68,7 +70,7 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		c.conn.Close()
 
-		delete(c.hub.clients, c)
+		c.hub.clients.Delete(c)
 		res := bson.M{"type": "leave", "data": c.Id}
 		sendMsg, _ := json.Marshal(&res)
 		c.hub.broadcast <- sendMsg
@@ -83,7 +85,7 @@ func (c *Client) readPump() {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
-			continue
+			return
 		}
 		var msg map[string]interface{}
 		err = json.Unmarshal(message, &msg)
@@ -104,7 +106,10 @@ func (c *Client) readPump() {
 		case "bye":
 			sessId := msg["session_id"].(string)
 			var session map[string]string
-			for _, v := range c.hub.sessions {
+			c.hub.sesslock.RLock()
+			sesss := c.hub.sessions
+			c.hub.sesslock.RUnlock()
+			for _, v := range sesss {
 				if v["id"] == sessId {
 					session = v
 				}
@@ -115,30 +120,35 @@ func (c *Client) readPump() {
 				c.send <- []byte(sendMsg)
 				return
 			}
-			for k := range c.hub.clients {
-				if k.SessionId == sessId {
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
+				if client.SessionId == sessId {
 					form := msg["from"].(string)
 					to := ""
-					if k.SessionId == form {
-						to = msg["to"].(string)
+					if client.Id == form {
+						to = session["to"]
 					} else {
-						to = form
+						to = session["form"]
 					}
 					res := bson.M{"type": "bye", "data": bson.M{"session_id": sessId, "from": form, "to": to}}
 					sendMsg, _ := json.Marshal(&res)
-					k.send <- []byte(sendMsg)
+					client.send <- []byte(sendMsg)
 				}
-			}
+				return true
+			})
 			break
 		case "offer":
 			sessId := msg["session_id"].(string)
 			var peer *Client
 			to := msg["to"].(string)
-			for k := range c.hub.clients {
-				if k.Id == to {
-					peer = k
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
+				if client.Id == to {
+					peer = client
+					return false
 				}
-			}
+				return true
+			})
 			if peer != nil {
 				res := bson.M{"type": "offer",
 					"data": bson.M{"to": peer.Id, "from": c.Id,
@@ -154,7 +164,9 @@ func (c *Client) readPump() {
 				ses["id"] = sessId
 				ses["from"] = c.Id
 				ses["to"] = peer.Id
+				c.hub.sesslock.Lock()
 				c.hub.sessions = append(c.hub.sessions, ses)
+				c.hub.sesslock.Unlock()
 			}
 			break
 		case "answer":
@@ -164,11 +176,14 @@ func (c *Client) readPump() {
 				"data": bson.M{"to": to, "from": c.Id,
 					"description": msg["description"].(map[string]interface{})}}
 			sendMsg, _ := json.Marshal(&res)
-			for k := range c.hub.clients {
-				if k.Id == to && c.SessionId == sessId {
-					k.send <- sendMsg
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
+				if client.Id == to && c.SessionId == sessId {
+					client.send <- sendMsg
+					return false
 				}
-			}
+				return true
+			})
 			break
 		case "candidate":
 			sessId := msg["session_id"].(string)
@@ -177,11 +192,14 @@ func (c *Client) readPump() {
 				"data": bson.M{"to": to, "from": c.Id,
 					"candidate": msg["candidate"].(map[string]interface{})}}
 			sendMsg, _ := json.Marshal(&res)
-			for k := range c.hub.clients {
-				if k.Id == to && c.SessionId == sessId {
-					k.send <- sendMsg
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
+				if client.Id == to && c.SessionId == sessId {
+					client.send <- sendMsg
+					return false
 				}
-			}
+				return true
+			})
 			break
 		case "keepalive":
 			res := bson.M{"type": "keepalive", "data": bson.M{}}

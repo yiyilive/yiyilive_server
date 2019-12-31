@@ -28,7 +28,7 @@ func main() {
 		sdp.ServeWs(hub, w, r)
 	})
 	go func() {
-		if err := http.ListenAndServeTLS(":"+*port, dir + "/server.pem", dir +"/server.key", nil); err != nil {
+		if err := http.ListenAndServeTLS(":"+*port, dir + "/sdp.icoolpy.com.pem", dir +"/sdp.icoolpy.com.key", nil); err != nil {
 			log.Panic("stopped", err)
 		}
 	}()

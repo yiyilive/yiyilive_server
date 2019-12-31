@@ -5,6 +5,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -21,12 +22,12 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 1024*8
+	maxMessageSize = 1024 * 8
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024*8,
-	WriteBufferSize: 1024*8,
+	ReadBufferSize:  1024 * 8,
+	WriteBufferSize: 1024 * 8,
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
@@ -50,11 +51,12 @@ type Client struct {
 
 func (c *Client) updatePeers() {
 	peers := make([]*Client, 0)
-	c.hub.clients.Range(func(key, value interface{}) bool {
-		client := key.(*Client)
+	c.hub.clientlock.RLock()
+	clients := c.hub.clients
+	c.hub.clientlock.RUnlock()
+	for client := range clients {
 		peers = append(peers, client)
-		return true
-	})
+	}
 	res := bson.M{"type": "peers", "data": peers}
 	msg, _ := json.Marshal(&res)
 	c.hub.broadcast <- msg
@@ -68,9 +70,7 @@ func (c *Client) updatePeers() {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
 
-		c.hub.clients.Delete(c)
 		res := bson.M{"type": "leave", "data": c.Id}
 		sendMsg, _ := json.Marshal(&res)
 		c.hub.broadcast <- sendMsg
@@ -93,7 +93,7 @@ func (c *Client) readPump() {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
-			break
+			return
 		}
 
 		switch msg["type"].(string) {
@@ -120,8 +120,10 @@ func (c *Client) readPump() {
 				c.send <- []byte(sendMsg)
 				return
 			}
-			c.hub.clients.Range(func(key, value interface{}) bool {
-				client := key.(*Client)
+			c.hub.clientlock.RLock()
+			clients := c.hub.clients
+			c.hub.clientlock.RUnlock()
+			for client := range clients {
 				if client.SessionId == sessId {
 					form := msg["from"].(string)
 					to := ""
@@ -132,30 +134,30 @@ func (c *Client) readPump() {
 					}
 					res := bson.M{"type": "bye", "data": bson.M{"session_id": sessId, "from": form, "to": to}}
 					sendMsg, _ := json.Marshal(&res)
-					client.send <- []byte(sendMsg)
+					client.send <- sendMsg
 				}
-				return true
-			})
+			}
 			break
 		case "offer":
 			sessId := msg["session_id"].(string)
 			var peer *Client
 			to := msg["to"].(string)
-			c.hub.clients.Range(func(key, value interface{}) bool {
-				client := key.(*Client)
+			c.hub.clientlock.RLock()
+			clients := c.hub.clients
+			c.hub.clientlock.RUnlock()
+			for client := range clients {
 				if client.Id == to {
 					peer = client
-					return false
+					break
 				}
-				return true
-			})
+			}
 			if peer != nil {
 				res := bson.M{"type": "offer",
 					"data": bson.M{"to": peer.Id, "from": c.Id,
 						"media": msg["media"].(string), "session_id": sessId,
 						"description": msg["description"].(map[string]interface{})}}
 				sendMsg, _ := json.Marshal(&res)
-				peer.send <- []byte(sendMsg)
+				peer.send <- sendMsg
 
 				peer.SessionId = sessId
 				c.SessionId = sessId
@@ -170,20 +172,22 @@ func (c *Client) readPump() {
 			}
 			break
 		case "answer":
+			log.Println(msg)
 			sessId := msg["session_id"].(string)
 			to := msg["to"].(string)
 			res := bson.M{"type": "answer",
 				"data": bson.M{"to": to, "from": c.Id,
 					"description": msg["description"].(map[string]interface{})}}
 			sendMsg, _ := json.Marshal(&res)
-			c.hub.clients.Range(func(key, value interface{}) bool {
-				client := key.(*Client)
+			c.hub.clientlock.RLock()
+			clients := c.hub.clients
+			c.hub.clientlock.RUnlock()
+			for client := range clients {
 				if client.Id == to && c.SessionId == sessId {
 					client.send <- sendMsg
-					return false
+					break
 				}
-				return true
-			})
+			}
 			break
 		case "candidate":
 			sessId := msg["session_id"].(string)
@@ -192,14 +196,16 @@ func (c *Client) readPump() {
 				"data": bson.M{"to": to, "from": c.Id,
 					"candidate": msg["candidate"].(map[string]interface{})}}
 			sendMsg, _ := json.Marshal(&res)
-			c.hub.clients.Range(func(key, value interface{}) bool {
-				client := key.(*Client)
+			log.Println(string(sendMsg))
+			c.hub.clientlock.RLock()
+			clients := c.hub.clients
+			c.hub.clientlock.RUnlock()
+			for client := range clients {
 				if client.Id == to && c.SessionId == sessId {
 					client.send <- sendMsg
-					return false
+					break
 				}
-				return true
-			})
+			}
 			break
 		case "keepalive":
 			res := bson.M{"type": "keepalive", "data": bson.M{}}
@@ -211,6 +217,10 @@ func (c *Client) readPump() {
 		}
 	}
 }
+
+var (
+	newline = []byte{'\n'}
+)
 
 // writePump pumps messages from the hub to the websocket connection.
 //
@@ -242,7 +252,7 @@ func (c *Client) writePump() {
 			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				//_, _ = w.Write(newline)
+				_, _ = w.Write(newline)
 				_, _ = w.Write(<-c.send)
 			}
 
@@ -272,4 +282,74 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// new goroutines.
 	go client.writePump()
 	go client.readPump()
+}
+
+// Hub maintains the set of active clients and broadcasts messages to the
+// clients.
+type Hub struct {
+	// Registered clients.
+	clients    map[*Client]bool
+	clientlock sync.RWMutex
+
+	sessions []map[string]string
+	sesslock sync.RWMutex
+
+	// Inbound messages from the clients.
+	broadcast chan []byte
+
+	// Register requests from the clients.
+	register chan *Client
+
+	// Unregister requests from clients.
+	unregister chan *Client
+}
+
+func NewHub() *Hub {
+	return &Hub{
+		clients:    make(map[*Client]bool),
+		sessions:   make([]map[string]string, 0),
+		broadcast:  make(chan []byte),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+	}
+}
+
+func (h *Hub) Leave(client *Client) {
+	h.clientlock.RLock()
+	clients := h.clients
+	h.clientlock.RUnlock()
+	close(client.send)
+	client.conn.Close()
+	if _, ok := clients[client]; ok {
+		h.clientlock.Lock()
+		delete(h.clients, client)
+		h.clientlock.Unlock()
+	}
+}
+
+func (h *Hub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.clientlock.Lock()
+			h.clients[client] = true
+			h.clientlock.Unlock()
+		case client := <-h.unregister:
+			h.Leave(client)
+		case message := <-h.broadcast:
+			h.clientlock.RLock()
+			clients := h.clients
+			h.clientlock.RUnlock()
+			for client := range clients {
+				select {
+				case client.send <- message:
+				default:
+					close(client.send)
+					h.clientlock.Lock()
+					delete(h.clients, client)
+					h.clientlock.Unlock()
+				}
+			}
+		}
+	}
 }

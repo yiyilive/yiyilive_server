@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/pion/logging"
-	"github.com/pion/turn"
+	"github.com/yiyilive/logging"
+	"github.com/yiyilive/stun"
+	"github.com/yiyilive/turn"
 	"log"
 	"net"
 	"os"
@@ -28,7 +29,7 @@ func main() {
 		Realm:              "coolpy.net",
 		AuthHandler:        createAuthHandler(usersMap),
 		ChannelBindTimeout: 30 * time.Second,
-		ListeningPort:      3478,
+		ListeningPort:      stun.DefaultPort,
 		LoggerFactory:      logging.NewDefaultLoggerFactory(),
 		Software:           "SOFTWARE",
 	}

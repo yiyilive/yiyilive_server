@@ -2,7 +2,6 @@ package sdp
 
 import (
 	"encoding/json"
-	"go.mongodb.org/mongo-driver/bson"
 	"log"
 	"net/http"
 	"sync"
@@ -57,7 +56,9 @@ func (c *Client) updatePeers() {
 	for client := range clients {
 		peers = append(peers, client)
 	}
-	res := bson.M{"type": "peers", "data": peers}
+	res := make(map[string]interface{})
+	res["type"] = "peers"
+	res["data"] = peers
 	msg, _ := json.Marshal(&res)
 	c.hub.broadcast <- msg
 }
@@ -71,7 +72,9 @@ func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
 
-		res := bson.M{"type": "leave", "data": c.Id}
+		res := make(map[string]interface{})
+		res["type"] = "leave"
+		res["data"] = c.Id
 		sendMsg, _ := json.Marshal(&res)
 		c.hub.broadcast <- sendMsg
 		c.updatePeers()
@@ -115,8 +118,12 @@ func (c *Client) readPump() {
 				}
 			}
 			if session == nil {
-				res := bson.M{"type": "error", "data": bson.M{"error": "Invalid session " + sessId}}
-				sendMsg, _ := json.Marshal(&res)
+				res := make(map[string]interface{})
+				res["type"] = "error"
+				ers := make(map[string]interface{})
+				ers["error"] = "Invalid session " + sessId
+				res["data"] = ers
+                sendMsg, _ := json.Marshal(&res)
 				c.send <- []byte(sendMsg)
 				return
 			}
@@ -125,14 +132,20 @@ func (c *Client) readPump() {
 			c.hub.clientlock.RUnlock()
 			for client := range clients {
 				if client.SessionId == sessId {
-					form := msg["from"].(string)
+					from := msg["from"].(string)
 					to := ""
-					if client.Id == form {
+					if client.Id == from {
 						to = session["to"]
 					} else {
 						to = session["form"]
 					}
-					res := bson.M{"type": "bye", "data": bson.M{"session_id": sessId, "from": form, "to": to}}
+					res := make(map[string]interface{})
+					res["type"] = "bye"
+					data := make(map[string]interface{})
+					data["session_id"] = sessId
+					data["from"] = from
+					data["to"] = to
+					res["data"] = data
 					sendMsg, _ := json.Marshal(&res)
 					client.send <- sendMsg
 				}
@@ -152,10 +165,15 @@ func (c *Client) readPump() {
 				}
 			}
 			if peer != nil {
-				res := bson.M{"type": "offer",
-					"data": bson.M{"to": peer.Id, "from": c.Id,
-						"media": msg["media"].(string), "session_id": sessId,
-						"description": msg["description"].(map[string]interface{})}}
+				res := make(map[string]interface{})
+				res["type"] = "offer"
+				data := make(map[string]interface{})
+				data["session_id"] = sessId
+				data["from"] = c.Id
+				data["to"] = peer
+				data["media"] = msg["media"].(string)
+				data["description"] = msg["description"].(map[string]interface{})
+				res["data"] = data
 				sendMsg, _ := json.Marshal(&res)
 				peer.send <- sendMsg
 
@@ -172,12 +190,17 @@ func (c *Client) readPump() {
 			}
 			break
 		case "answer":
-			log.Println(msg)
 			sessId := msg["session_id"].(string)
 			to := msg["to"].(string)
-			res := bson.M{"type": "answer",
-				"data": bson.M{"to": to, "from": c.Id,
-					"description": msg["description"].(map[string]interface{})}}
+
+			res := make(map[string]interface{})
+			res["type"] = "answer"
+			data := make(map[string]interface{})
+			data["session_id"] = sessId
+			data["from"] = c.Id
+			data["to"] = to
+			data["description"] = msg["description"].(map[string]interface{})
+			res["data"] = data
 			sendMsg, _ := json.Marshal(&res)
 			c.hub.clientlock.RLock()
 			clients := c.hub.clients
@@ -192,9 +215,15 @@ func (c *Client) readPump() {
 		case "candidate":
 			sessId := msg["session_id"].(string)
 			to := msg["to"].(string)
-			res := bson.M{"type": "candidate",
-				"data": bson.M{"to": to, "from": c.Id,
-					"candidate": msg["candidate"].(map[string]interface{})}}
+
+			res := make(map[string]interface{})
+			res["type"] = "candidate"
+			data := make(map[string]interface{})
+			data["session_id"] = sessId
+			data["from"] = c.Id
+			data["to"] = to
+			data["candidate"] = msg["candidate"].(map[string]interface{})
+			res["data"] = data
 			sendMsg, _ := json.Marshal(&res)
 			log.Println(string(sendMsg))
 			c.hub.clientlock.RLock()
@@ -208,7 +237,9 @@ func (c *Client) readPump() {
 			}
 			break
 		case "keepalive":
-			res := bson.M{"type": "keepalive", "data": bson.M{}}
+			res := make(map[string]interface{})
+			res["type"] = "keepalive"
+			res["data"] = nil
 			sendMsg, _ := json.Marshal(&res)
 			c.send <- sendMsg
 			break

@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sdp"
 	"syscall"
+	"yiyilive/src/sdp"
 )
 
 func main() {
-	port := flag.String("p", "8443", "https port")
+	port := flag.String("p", ":8443", "https port")
 	flag.Parse()
 
 	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
@@ -28,11 +28,11 @@ func main() {
 		sdp.ServeWs(hub, w, r)
 	})
 	go func() {
-		if err := http.ListenAndServeTLS(":"+*port, dir + "/sdp.icoolpy.com.pem", dir +"/sdp.icoolpy.com.key", nil); err != nil {
+		if err := http.ListenAndServeTLS(*port, dir+"/sdp.icoolpy.com.pem", dir+"/sdp.icoolpy.com.key", nil); err != nil {
 			log.Panic("stopped", err)
 		}
 	}()
-	log.Println("Web listening :", *port)
+	log.Println("sdp listening", *port)
 
 	signalChan := make(chan os.Signal, 1)
 	cleanupDone := make(chan bool)

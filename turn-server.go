@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/yiyilive/logging"
-	"github.com/yiyilive/stun"
-	"github.com/yiyilive/turn"
+	"github.com/pion/logging"
+	"github.com/pion/stun"
+	"github.com/pion/turn"
 	"log"
 	"net"
 	"os"
@@ -41,7 +41,7 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Println("stun server on port", conf.ListeningPort)
+	log.Println("turn server on port", conf.ListeningPort)
 
 	signalChan := make(chan os.Signal, 1)
 	cleanupDone := make(chan bool)

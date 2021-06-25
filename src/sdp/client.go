@@ -49,12 +49,10 @@ type Client struct {
 
 func (c *Client) updatePeers() {
 	peers := make([]*Client, 0)
-	c.hub.clientlock.RLock()
-	clients := c.hub.clients
-	c.hub.clientlock.RUnlock()
-	for client := range clients {
-		peers = append(peers, client)
-	}
+	c.hub.clients.Range(func(key, value interface{}) bool {
+		peers = append(peers, key.(*Client))
+		return true
+	})
 	res := make(map[string]interface{})
 	res["type"] = "peers"
 	res["data"] = peers
@@ -123,13 +121,11 @@ func (c *Client) readPump() {
 				ers["error"] = "Invalid session " + sessId
 				res["data"] = ers
 				sendMsg, _ := json.Marshal(&res)
-				c.send <- []byte(sendMsg)
+				c.send <- sendMsg
 				return
 			}
-			c.hub.clientlock.RLock()
-			clients := c.hub.clients
-			c.hub.clientlock.RUnlock()
-			for client := range clients {
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
 				if client.SessionId == sessId {
 					from := msg["from"].(string)
 					to := ""
@@ -148,21 +144,21 @@ func (c *Client) readPump() {
 					sendMsg, _ := json.Marshal(&res)
 					client.send <- sendMsg
 				}
-			}
+				return true
+			})
 			break
 		case "offer":
 			sessId := msg["session_id"].(string)
 			var peer *Client
 			to := msg["to"].(string)
-			c.hub.clientlock.RLock()
-			clients := c.hub.clients
-			c.hub.clientlock.RUnlock()
-			for client := range clients {
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
 				if client.Id == to {
 					peer = client
-					break
+					return false
 				}
-			}
+				return true
+			})
 			if peer != nil {
 				res := make(map[string]interface{})
 				res["type"] = "offer"
@@ -201,15 +197,15 @@ func (c *Client) readPump() {
 			data["description"] = msg["description"].(map[string]interface{})
 			res["data"] = data
 			sendMsg, _ := json.Marshal(&res)
-			c.hub.clientlock.RLock()
-			clients := c.hub.clients
-			c.hub.clientlock.RUnlock()
-			for client := range clients {
+
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
 				if client.Id == to && c.SessionId == sessId {
 					client.send <- sendMsg
-					break
+					return false
 				}
-			}
+				return true
+			})
 			break
 		case "candidate":
 			sessId := msg["session_id"].(string)
@@ -224,16 +220,15 @@ func (c *Client) readPump() {
 			data["candidate"] = msg["candidate"].(map[string]interface{})
 			res["data"] = data
 			sendMsg, _ := json.Marshal(&res)
-			log.Println(string(sendMsg))
-			c.hub.clientlock.RLock()
-			clients := c.hub.clients
-			c.hub.clientlock.RUnlock()
-			for client := range clients {
+
+			c.hub.clients.Range(func(key, value interface{}) bool {
+				client := key.(*Client)
 				if client.Id == to && c.SessionId == sessId {
 					client.send <- sendMsg
-					break
+					return false
 				}
-			}
+				return true
+			})
 			break
 		case "keepalive":
 			res := make(map[string]interface{})
